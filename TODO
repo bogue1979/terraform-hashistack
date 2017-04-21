@@ -1,6 +1,5 @@
 remote provisioner
    reconfigure consul for ssl and restart consul
-   nomad
 
 document trust ca for local
 

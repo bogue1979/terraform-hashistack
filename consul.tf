@@ -1,4 +1,3 @@
-
 data "aws_ami" "coreos_stable" {
   most_recent = true
 
@@ -134,9 +133,21 @@ resource "aws_instance" "server" {
       "sudo cp consul-server-${count.index}.pem /etc/ssl/private/server.pem",
       "sudo cp consul-server-${count.index}.crt /etc/ssl/private/server.crt",
       "sudo sed -i \"s/tls_disable = 1/tls_disable = 0/\" /etc/vault/config.hcl",
-      "sudo systemctl restart vault"
+      "sudo systemctl restart vault",
+      "sudo mv /opt/nomad-tls.hcl /etc/nomad/nomad-tls.hcl",
+      "sudo systemctl restart nomad"
     ]
   }
 }
 
+resource "null_resource" "serverlist" {
+  # write
+  triggers {
+    cluster_instance_ips = "${join(",", aws_instance.server.*.public_ip)}"
+  }
+
+  provisioner "local-exec" {
+    command = "echo ${join(" ", aws_instance.server.*.public_ip)} > ${path.module}/files/serverlist.txt"
+  }
+}
 

@@ -1,7 +1,7 @@
 #cloud-config
 write_files:
   - path: "/etc/vault/config.hcl"
-    permissions: "0755"
+    permissions: "0644"
     owner: "root"
     content: |
       backend  "consul" {
@@ -15,7 +15,19 @@ write_files:
         tls_cert_file = "/etc/ssl/private/server.crt"
         tls_key_file = "/etc/ssl/private/server.key"
       }
-  - path: "/opt/bin/install_consul.sh"
+  - path: "/opt/nomad-tls.hcl"
+    permissions: "0644"
+    owner: "root"
+    content: |
+      tls {
+        http = true
+        rpc  = true
+
+        ca_file   = "/etc/ssl/certs/ca.pem"
+        cert_file = "/etc/ssl/private/server.pem"
+        key_file  = "/etc/ssl/private/server.key"
+      }
+  - path: "/opt/bin/install_hashistack.sh"
     permissions: "0755"
     owner: "root"
     content: |
@@ -23,6 +35,8 @@ write_files:
       echo "Grabbing IPs..."
       PRIVATE_IP=$(curl http://169.254.169.254/latest/meta-data/local-ipv4)
       PUBLIC_IP=$(curl http://169.254.169.254/latest/meta-data/public-ipv4)
+      AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+      REGION=$(echo $${AZ::-1})
 
       echo "Fetching binaries..."
       cd /tmp
@@ -47,7 +61,7 @@ write_files:
 
       echo "Configure Consul..."
       mkdir -p /etc/consul
-      cat << -EOF > /etc/consul/config.json
+      cat << EOF > /etc/consul/config.json
       {
         "bind_addr": "$PRIVATE_IP",
         "advertise_addr": "$PRIVATE_IP",
@@ -60,6 +74,39 @@ write_files:
         "leave_on_terminate": true,
         ${config}
       }
+      EOF
+
+      echo "Configure Nomad Server..."
+      mkdir -p /etc/nomad
+      cat << EOF > /etc/nomad/server.hcl
+      log_level = "INFO"
+      data_dir = "/opt/nomad"
+      bind_addr = "0.0.0.0"
+      name = "$PRIVATE_IP"
+      region = "$REGION"
+      disable_anonymous_signature = true
+      disable_update_check = true
+      advertise {
+         http = "$PRIVATE_IP"
+         rpc  = "$PRIVATE_IP"
+         serf = "$PRIVATE_IP"
+      }
+      server {
+          enabled = true
+          bootstrap_expect = 3
+          encrypt = "pvnHNw3Pzi04BwlOMLgV0w=="
+      }
+      client {
+          enabled = false
+      }
+      consul {
+            address = "127.0.0.1:8500"
+      }
+      #vault {
+      #   enabled = true
+      #   address = "http://$PRIVATE_IP:8200"
+      #   create_from_role = "nomad-cluster"
+      #}
       EOF
 coreos:
   units:
@@ -77,7 +124,7 @@ coreos:
         After=network.target
         [Service]
         Type=oneshot
-        ExecStart=/usr/bin/sh -c "/opt/bin/install_consul.sh"
+        ExecStart=/usr/bin/sh -c "/opt/bin/install_hashistack.sh"
     - name: consul.service
       command: start
       content: |
@@ -98,3 +145,14 @@ coreos:
         Restart=always
         RestartSec=10s
         ExecStart=/opt/bin/vault server -config /etc/vault/config.hcl
+    - name: nomad.service
+      command: start
+      content: |
+        [Unit]
+        Description=Nomad Server Service
+        After=consul.service
+        Requires=consul.service
+        [Service]
+        Restart=always
+        RestartSec=10s
+        ExecStart=/opt/bin/nomad agent -config /etc/nomad

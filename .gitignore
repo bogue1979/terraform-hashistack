@@ -1,2 +1,6 @@
 .terraform
 terraform.tfstate.backup
+files/.unsealed
+files/serverlist.txt
+files/ca/certs/*
+files/vault.keys
