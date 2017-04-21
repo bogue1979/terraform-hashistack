@@ -1,0 +1,16 @@
+{
+    "CN": "CA for my hashistack",
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "DE",
+            "L": "B",
+            "O": "Hashistack Company",
+            "ST": "Berlin",
+            "OU": "TeamName"
+        }
+    ]
+}

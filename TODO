@@ -1,0 +1,18 @@
+link: https://coreos.com/os/docs/latest/generate-self-signed-certificates.html
+
+== Consul server: ca_cert ca_config
+1. start instance
+2. local provisioner
+   create certificate ${name}.internal.domain  ${ip} localhost 127.0.0.1 consul.r53.meteogroup.de  (server and client)
+                      ${name}.internal.domain  ${ip} localhost 127.0.0.1 vault.r53.meteogroup.de   (server)
+                      ${name}.internal.domain  ${ip} localhost 127.0.0.1 nomad.r53.meteogroup.de   (server and client)
+3. remote provisioner
+   cp certs and configs to final location
+   restart consul
+   restart vault
+   restart nomad
+   trust ca
+      coreos:
+      Copy the PEM-encoded certificate authority file (usually with a .pem file name extension) to /etc/ssl/certs
+      Run the update-ca-certificates script to update the system bundle of Certificate Authorities. All programs running on the system will now trust the added CA.
+
