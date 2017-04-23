@@ -14,6 +14,9 @@ variable "key_name" { }
 variable "servers" {
   default = 3
 }
+variable "agents" {
+  default = 2
+}
 
 variable "consul_join_tag_key" {
   default = "role"
@@ -24,6 +27,10 @@ variable "consul_join_tag_value" {
 }
 
 variable "server_instance_type" {
+  default = "t2.medium"
+}
+
+variable "agent_instance_type" {
   default = "t2.medium"
 }
 

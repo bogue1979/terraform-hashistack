@@ -6,21 +6,6 @@ write_files:
     content: |
       [Resolve]
       DNS=127.0.0.1
-  - path: "/etc/vault/config.hcl"
-    permissions: "0644"
-    owner: "root"
-    content: |
-      backend  "consul" {
-          path = "vault"
-      }
-
-      listener "tcp" {
-        address = "0.0.0.0:8200"
-        # will be enabled via terraform remote executor after certificate deployment
-        tls_disable = 1
-        tls_cert_file = "/etc/ssl/private/server.crt"
-        tls_key_file = "/etc/ssl/private/server.key"
-      }
   - path: "/etc/nomad/nomad-tls.hcl"
     permissions: "0644"
     owner: "root"
@@ -28,7 +13,6 @@ write_files:
       tls {
         http = true
         rpc  = true
-
         ca_file   = "/etc/ssl/certs/ca.pem"
         cert_file = "/etc/ssl/private/server.pem"
         key_file  = "/etc/ssl/private/server.key"
@@ -47,18 +31,12 @@ write_files:
       echo "Fetching binaries..."
       cd /tmp
       curl -sLo consul.zip https://releases.hashicorp.com/consul/${consul_version}/consul_${consul_version}_linux_amd64.zip
-      curl -sLo vault.zip https://releases.hashicorp.com/vault/${vault_version}/vault_${vault_version}_linux_amd64.zip
       curl -sLo nomad.zip https://releases.hashicorp.com/nomad/${nomad_version}/nomad_${nomad_version}_linux_amd64.zip
 
       echo "Installing Consul..."
       unzip consul.zip >/dev/null
       chmod +x consul
       mv consul /opt/bin/consul
-
-      echo "Installing Vault..."
-      unzip vault.zip >/dev/null
-      chmod +x vault
-      mv vault /opt/bin/vault
 
       echo "Installing Nomad..."
       unzip nomad.zip >/dev/null
@@ -67,7 +45,6 @@ write_files:
 
       echo "Configure Consul..."
       mkdir -p /etc/consul
-        #"advertise_addr_wan": "$PUBLIC_IP",
       cat << EOF > /etc/consul/config.json
       {
         "bind_addr": "$PRIVATE_IP",
@@ -86,31 +63,31 @@ write_files:
       mkdir -p /etc/nomad
       cat << EOF > /etc/nomad/server.hcl
       log_level = "INFO"
-      data_dir = "/opt/nomad"
+      data_dir = "/var/lib/docker/nomad"
       bind_addr = "0.0.0.0"
       name = "$PRIVATE_IP"
       region = "$REGION"
       disable_anonymous_signature = true
       disable_update_check = true
+      leave_on_interrupt = true
+      leave_on_terminate = true
       advertise {
          http = "$PRIVATE_IP"
          rpc  = "$PRIVATE_IP"
          serf = "$PRIVATE_IP"
       }
       server {
-          enabled = true
-          bootstrap_expect = 3
-          encrypt = "pvnHNw3Pzi04BwlOMLgV0w=="
+          enabled = false
       }
       client {
-          enabled = false
+          enabled = true
       }
       consul {
             address = "127.0.0.1:8500"
       }
       #vault {
       #   enabled = true
-      #   address = "http://$PRIVATE_IP:8200"
+      #   address = "https://vault.service.consul:8200"
       #   create_from_role = "nomad-cluster"
       #}
       EOF
@@ -118,22 +95,56 @@ coreos:
   units:
     - name: etcd2.service
       command: stop
-    - name: "docker.service"
-      command: "stop"
     - name: fleet.service
       command: stop
+    - name: format-docker-disk.service
+      runtime: true
+      command: start
+      content: |
+        [Unit]
+        Description=Format XVDB
+        Before=docker.service
+        Before=docker-early.service
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=-/usr/sbin/wipefs -f /dev/xvdb
+        ExecStart=-/usr/sbin/mkfs.xfs /dev/xvdb
+    - name: var-lib-docker.mount
+      command: start
+      content: |
+        [Unit]
+        Description=Mount storage to /var/lib/docker
+        Requires=format-docker-disk.service
+        After=format-docker-disk.service
+        Before=docker.service
+        Before=docker-early.service
+        [Mount]
+        What=/dev/xvdb
+        Where=/var/lib/docker
+        Type=xfs
+    - name: docker.service
+      command: start
+      drop-ins:
+        - name: 10-wait-docker.conf
+          content: |
+            [Unit]
+            After=var-lib-docker.mount
+            Requires=var-lib-docker.mount
+            Restart=always
+            [Service]
+            Environment=DOCKER_OPTS=--bip=172.21.0.1/16 --fixed-cidr=172.21.0.0/16 --dns=172.21.0.1 --dns=${dns_server}
     - name: dnsmasq.service
       command: start
       content: |
         [Unit]
         Description=dnsmasq
-        After=network.target
-
+        After=docker.service
         [Service]
         Slice=machine.slice
         ExecStartPre=/usr/bin/rkt trust --trust-keys-from-https --prefix coreos.com/dnsmasq
         ExecStartPre=/usr/bin/rkt trust --trust-keys-from-https --prefix quay.io/coreos/alpine-sh
-        ExecStart=/usr/bin/rkt run coreos.com/dnsmasq:v0.3.0 --net=host --dns ${dns_server} --  -k --conf-file= --bind-interfaces --server=/consul/127.0.0.1#8600
+        ExecStart=/usr/bin/rkt run coreos.com/dnsmasq:v0.3.0 --net=host --dns ${dns_server} --  -k --interface=docker0 --conf-file= --bind-interfaces --server=/consul/127.0.0.1#8600
         KillMode=mixed
         Restart=always
     - name: install-consul.service
@@ -155,18 +166,7 @@ coreos:
         After=install-consul.service
         Requires=install-consul.service
         [Service]
-        ExecStart=/opt/bin/consul agent -ui -config-dir /etc/consul
-    - name: vault.service
-      command: start
-      content: |
-        [Unit]
-        Description=Vault Service
-        After=consul.service
-        Requires=consul.service
-        [Service]
-        Restart=always
-        RestartSec=10s
-        ExecStart=/opt/bin/vault server -config /etc/vault/config.hcl
+        ExecStart=/opt/bin/consul agent -config-dir /etc/consul
     - name: nomad.service
       command: start
       content: |

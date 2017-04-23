@@ -21,8 +21,9 @@ data "template_file" "server" {
 
   vars {
     consul_version = "0.8.1"
-    vault_version = "0.7.0"
-    nomad_version = "0.5.6"
+    vault_version  = "0.7.0"
+    nomad_version  = "0.5.6"
+    dns_server     = "10.40.0.2"
 
     config = <<EOF
        "bootstrap_expect": 3,
@@ -50,6 +51,12 @@ resource "aws_security_group" "consul2" {
     to_port     = 0
     protocol    = "-1"
     self        = true
+  }
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    security_groups = [ "${aws_security_group.agents.id}" ]
   }
 
   ingress {
@@ -134,7 +141,6 @@ resource "aws_instance" "server" {
       "sudo cp consul-server-${count.index}.crt /etc/ssl/private/server.crt",
       "sudo sed -i \"s/tls_disable = 1/tls_disable = 0/\" /etc/vault/config.hcl",
       "sudo systemctl restart vault",
-      "sudo mv /opt/nomad-tls.hcl /etc/nomad/nomad-tls.hcl",
       "sudo systemctl restart nomad"
     ]
   }
