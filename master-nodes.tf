@@ -32,6 +32,12 @@ data "template_file" "server" {
          "tag_key": "${var.consul_join_tag_key}",
          "tag_value": "${var.consul_join_tag_value}"
        },
+       "ports": {
+         "https": 8080
+       },
+       "ca_file": "/etc/ssl/certs/ca.pem",
+       "cert_file": "/etc/ssl/private/server.pem",
+       "key_file": "/etc/ssl/private/server.key",
        "server": true
     EOF
   }
@@ -56,7 +62,7 @@ resource "aws_security_group" "consul2" {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    security_groups = [ "${aws_security_group.agents.id}" ]
+    security_groups = [ "${aws_security_group.agents.id}","${aws_security_group.jumphost.id}" ]
   }
 
   ingress {
@@ -116,7 +122,7 @@ resource "aws_instance" "server" {
   user_data = "${element(data.template_file.server.*.rendered, count.index)}"
 
   provisioner "local-exec" {
-    command = "${path.module}/files/generate_cert.sh ${self.tags.Name} 127.0.0.1,${self.private_ip},vault.${var.external_domain},nomad.${var.external_domain},consul.${var.external_domain} peer"
+    command = "${path.module}/files/generate_cert.sh ${self.tags.Name} 127.0.0.1,${self.private_ip},${self.public_ip},vault.${var.external_domain},nomad.${var.external_domain},consul.${var.external_domain},client.${var.region}.nomad,server.${var.region}.nomad peer"
   }
 
   provisioner "file" {
@@ -135,7 +141,7 @@ resource "aws_instance" "server" {
     inline = [
       "tar xzf certs.tgz",
       "sudo cp ca.pem /etc/ssl/certs",
-      "sudo update-ca-certificates",
+      "sudo update-ca-certificates > /dev/null",
       "sudo cp consul-server-${count.index}-key.pem /etc/ssl/private/server.key",
       "sudo cp consul-server-${count.index}.pem /etc/ssl/private/server.pem",
       "sudo cp consul-server-${count.index}.crt /etc/ssl/private/server.crt",

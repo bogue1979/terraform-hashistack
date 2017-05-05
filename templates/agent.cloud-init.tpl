@@ -11,8 +11,8 @@ write_files:
     owner: "root"
     content: |
       tls {
-        http = true
-        rpc  = true
+        http = false
+        rpc  = false
         ca_file   = "/etc/ssl/certs/ca.pem"
         cert_file = "/etc/ssl/private/server.pem"
         key_file  = "/etc/ssl/private/server.key"
@@ -47,7 +47,10 @@ write_files:
       mkdir -p /etc/consul
       cat << EOF > /etc/consul/config.json
       {
-        "bind_addr": "$PRIVATE_IP",
+        "addresses": {
+          "dns": "0.0.0.0",
+          "http": "0.0.0.0"
+        },
         "advertise_addr": "$PRIVATE_IP",
         "data_dir": "/opt/consul",
         "encrypt": "CkqzRm5kVDBZcPyZFLF7sQ==",

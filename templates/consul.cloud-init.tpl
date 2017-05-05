@@ -27,7 +27,7 @@ write_files:
     content: |
       tls {
         http = true
-        rpc  = true
+        rpc  = false
 
         ca_file   = "/etc/ssl/certs/ca.pem"
         cert_file = "/etc/ssl/private/server.pem"
@@ -70,7 +70,11 @@ write_files:
         #"advertise_addr_wan": "$PUBLIC_IP",
       cat << EOF > /etc/consul/config.json
       {
-        "bind_addr": "$PRIVATE_IP",
+        "addresses": {
+          "https": "0.0.0.0",
+          "dns": "0.0.0.0",
+          "http": "0.0.0.0"
+        },
         "advertise_addr": "$PRIVATE_IP",
         "data_dir": "/opt/consul",
         "encrypt": "CkqzRm5kVDBZcPyZFLF7sQ==",

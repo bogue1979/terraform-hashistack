@@ -2,6 +2,10 @@ output "vpc_id" {
   value = "${aws_vpc.terraformmain.id}"
 }
 
+output "vpc-fullcidr" {
+  value = "${var.vpc-fullcidr}"
+}
+
 output "private_networks" {
   value = ["${aws_subnet.PRIV_A.id}", "${aws_subnet.PRIV_B.id}"]
 }

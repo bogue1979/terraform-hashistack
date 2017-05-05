@@ -17,6 +17,11 @@ module "vpc" {
   environment_tag    = "recovery"
 }
 
+
+variable "vpn_network" {
+  default = "172.27.0.0/16"
+}
+
 resource "aws_security_group" "jumphost" {
   name = "jumphost"
   tags {
@@ -26,10 +31,17 @@ resource "aws_security_group" "jumphost" {
   vpc_id = "${module.vpc.vpc_id}"
 
   ingress {
-        from_port = 22
-        to_port = 22
-        protocol = "TCP"
+        from_port   = 22
+        to_port     = 22
+        protocol    = "TCP"
         cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 1194
+    to_port     = 1194
+    protocol    = "UDP"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -39,8 +51,25 @@ resource "aws_security_group" "jumphost" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
+
+data "aws_ami" "debian_stable" {
+  most_recent = true
+
+  filter {
+    name   = "name"
+    values = ["debian-jessie-amd64-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+
+  owners = ["379101102735"] # Debian
+}
+
 resource "aws_instance" "jumphost" {
-  ami           = "${data.aws_ami.coreos_stable.id}"
+  ami           = "${data.aws_ami.debian_stable.id}"
   instance_type = "t2.micro"
   associate_public_ip_address = "true"
   subnet_id = "${module.vpc.dmz_subnet_a}"
@@ -55,9 +84,73 @@ resource "aws_instance" "jumphost" {
         team = "platform"
         product = "hashistack"
   }
-#  user_data = <<HEREDOC
-#  #!/bin/bash
-#  yum update -y
-#  rpm -Uvh https://yum.puppetlabs.com/puppetlabs-release-pc1-el-7.noarch.rpm
-#HEREDOC
+  user_data = <<HEREDOC
+#!/bin/bash
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get -y install openvpn iptables-persistent
+mkdir -p /etc/openvpn/keys/
+openssl dhparam -out /etc/openvpn/keys/dh2048.pem 2048 &
+iptables -t nat -A POSTROUTING -o eth0  -j MASQUERADE
+echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/30-ip_forwrding.conf
+sysctl -p /etc/sysctl.d/30-ip_forwrding.conf
+iptables-save > /etc/iptables/rules.v4
+
+cat <<EOF > /etc/openvpn/server.conf
+port 1194
+proto udp
+dev tun
+server ${element(split("/",var.vpn_network),0)} ${cidrnetmask(var.vpn_network)}
+push "route ${element(split("/",module.vpc.vpc-fullcidr),0)} ${cidrnetmask(module.vpc.vpc-fullcidr)}"
+ca /etc/openvpn/keys/ca.pem
+cert /etc/openvpn/keys/server.pem
+key /etc/openvpn/keys/server.key
+dh /etc/openvpn/keys/dh2048.pem
+tls-version-min 1.2
+tls-cipher TLS-ECDHE-RSA-WITH-AES-128-GCM-SHA256:TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256:TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384:TLS-DHE-RSA-WITH-AES-256-CBC-SHA256
+cipher AES-256-CBC
+auth SHA512
+ifconfig-pool-persist ipp.txt
+keepalive 10 120
+comp-lzo
+persist-key
+persist-tun
+status openvpn-status.log
+log-append  /var/log/openvpn.log
+verb 3
+max-clients 100
+user nobody
+group nogroup
+EOF
+
+HEREDOC
+
+  provisioner "local-exec" {
+    command = "${path.module}/files/generate_cert.sh ${self.tags.Name} 127.0.0.1,${self.private_ip} server"
+  }
+
+  provisioner "file" {
+    connection {
+        type              = "ssh"
+        user              = "admin"
+    }
+    source      = "${path.module}/files/ca/certs/jumphost.tgz"
+    destination = "/home/admin/certs.tgz"
+  }
+
+  provisioner "remote-exec" {
+    connection {
+      type              = "ssh"
+      user              = "admin"
+    }
+    inline = [
+      "tar xzf certs.tgz",
+      "while ! [ -f /etc/openvpn/keys/dh2048.pem ] ; do echo wait for dh ; sleep 10 ; done",
+      "sudo cp ca.pem /etc/openvpn/keys",
+      "sudo cp jumphost-key.pem /etc/openvpn/keys/server.key",
+      "sudo cp jumphost.pem /etc/openvpn/keys/server.pem",
+      "sudo systemctl enable openvpn@server",
+      "sudo systemctl start openvpn@server"
+    ]
+  }
 }
